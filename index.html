@@ -9,9 +9,29 @@
     <meta property="og:description" content="Automated credit card statement expense extractor, duplicate detector, smart categorizer, and Google Sheets bidirectional sync dashboard." />
     <meta property="og:type" content="website" />
     <meta name="twitter:card" content="summary_large_image" />
+    <script>
+      // When deployed to GitHub Pages with folder set to "/ (root)",
+      // GitHub Pages serves this raw source index.html instead of the built bundle in /docs.
+      // Automatically redirect to /docs/ so the application loads without a blank screen.
+      (function() {
+        var host = window.location.hostname;
+        var pathname = window.location.pathname;
+        if (host.endsWith('github.io') && !pathname.includes('/docs') && !pathname.includes('/dist')) {
+          var target = pathname.endsWith('/') ? pathname + 'docs/' : pathname + '/docs/';
+          window.location.replace(target + window.location.search + window.location.hash);
+        }
+      })();
+    </script>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div style="font-family:system-ui,-apple-system,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;background:#f8fafc;color:#334155;">
+        <div style="text-align:center;padding:2rem;">
+          <h1 style="font-size:1.5rem;font-weight:700;margin-bottom:0.5rem;color:#0f172a;">StatementFlow</h1>
+          <p style="font-size:0.875rem;color:#64748b;">Loading expense tracker dashboard...</p>
+        </div>
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

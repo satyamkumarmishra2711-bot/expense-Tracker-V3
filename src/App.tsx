@@ -26,7 +26,15 @@ import { SheetManagerModal } from './components/SheetManagerModal';
 import { RuleManagerModal } from './components/RuleManagerModal';
 import { EmailSyncModal } from './components/EmailSyncModal';
 import { UnauthorizedDomainModal } from './components/UnauthorizedDomainModal';
-import { searchRecentTransactionEmails, parseEmailsToTransactions, deduplicateTransactions } from './services/gmailSync';
+import { EmailSyncButton } from './components/EmailSyncButton';
+import { SyncedEmailsModal } from './components/SyncedEmailsModal';
+import {
+  searchRecentTransactionEmails,
+  parseEmailsToTransactions,
+  deduplicateTransactions,
+  EmailTransactionAlert,
+  TimeRangeOption
+} from './services/gmailSync';
 import {
   getLocalDateString,
   getStartOfWeek,
@@ -53,6 +61,18 @@ import {
 const LOCAL_STORAGE_SHEET_KEY = 'statementflow_connected_sheet';
 const LOCAL_STORAGE_TX_BACKUP_KEY = 'statementflow_txs_backup';
 
+// Wipe any legacy unauthenticated cache immediately to protect private data
+try {
+  if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
+    localStorage.removeItem(LOCAL_STORAGE_TX_BACKUP_KEY);
+  }
+} catch {}
+
+// Synthetic dummy transactions generated from generic demo preset (no personal data)
+const DUMMY_TRANSACTIONS: Transaction[] = deduplicateTransactions(
+  buildTransactionsFromPreset(SAMPLE_STATEMENTS[0])
+);
+
 export default function App() {
   // Auth state
   const [user, setUser] = useState<User | null>(null);
@@ -70,44 +90,8 @@ export default function App() {
     }
   });
 
-  // Main Transactions Dataset
-  const [transactions, setTransactions] = useState<Transaction[]>(() => {
-    try {
-      const backup = localStorage.getItem(LOCAL_STORAGE_TX_BACKUP_KEY);
-      if (backup) {
-        const parsed: Transaction[] = JSON.parse(backup);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          // Date sanitization, >25k expense filter, and removal of boilerplate names
-          const validTxs = parsed.filter(t => {
-            if (!t.date) return false;
-            if (t.amount > 25000) return false;
-
-            // Clean out buggy placeholder names
-            const m = (t.merchant || '').toLowerCase();
-            if (m.includes('dear cardholder') || m.includes('you have done') || m.includes('transaction alert from')) {
-              return false;
-            }
-
-            // Purge legacy bogus 2026-01 / 2026-02 / 2026-03 entries if created from previous test runs
-            const month = t.statement_month || t.date.substring(0, 7);
-            if (month === '2026-01' || month === '2026-02' || month === '2026-03' || month === '2026-04') {
-              return false;
-            }
-            return true;
-          });
-
-          const deduped = deduplicateTransactions(validTxs);
-          if (deduped.length > 0) {
-            return deduped;
-          }
-        }
-      }
-    } catch {}
-    // Seed with user's authentic ICICI statement dataset for Mr Satyam Mishra (filtered <= 25k)
-    return deduplicateTransactions([
-      ...buildTransactionsFromPreset(SAMPLE_STATEMENTS[0]).filter(t => t.amount <= 25000)
-    ]);
-  });
+  // Main Transactions Dataset: without login with Google, only dummy data is visible
+  const [transactions, setTransactions] = useState<Transaction[]>(DUMMY_TRANSACTIONS);
 
   // Filter states
   const [timeFilter, setTimeFilter] = useState<'all' | 'today' | 'this_week' | 'this_month'>('all');
@@ -157,25 +141,43 @@ export default function App() {
     setTimeout(() => setToastMessage(null), 4000);
   };
 
-  // Sync to local backup whenever transactions change
+  // Sync to local backup ONLY when user is authenticated (user-scoped storage key)
   useEffect(() => {
-    try {
-      localStorage.setItem(LOCAL_STORAGE_TX_BACKUP_KEY, JSON.stringify(transactions));
-    } catch (e) {
-      console.warn('Failed to backup transactions locally', e);
+    if (user && user.uid) {
+      try {
+        localStorage.setItem(`statementflow_user_txs_${user.uid}`, JSON.stringify(transactions));
+      } catch (e) {
+        console.warn('Failed to backup user transactions locally', e);
+      }
     }
-  }, [transactions]);
+  }, [transactions, user]);
 
-  // Auth state listener
+  // Auth state listener: loads user data on sign-in, reverts to dummy data when not signed in
   useEffect(() => {
     const unsubscribe = initAuth(
       (currentUser, accessToken) => {
         setUser(currentUser);
         setToken(accessToken);
         setNeedsAuth(false);
+        // Load user-specific private data if present
+        try {
+          const userKey = `statementflow_user_txs_${currentUser.uid}`;
+          const saved = localStorage.getItem(userKey);
+          if (saved) {
+            const parsed = JSON.parse(saved);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              setTransactions(parsed);
+              return;
+            }
+          }
+        } catch {}
       },
       () => {
+        setUser(null);
+        setToken(null);
         setNeedsAuth(true);
+        // When not logged in with Google, only dummy data is visible
+        setTransactions(DUMMY_TRANSACTIONS);
       }
     );
     return () => unsubscribe();
@@ -184,13 +186,19 @@ export default function App() {
   const [isUnauthorizedDomainOpen, setIsUnauthorizedDomainOpen] = useState(false);
   const [unauthorizedDomain, setUnauthorizedDomain] = useState<string>('');
   const [isAutoSyncingEmail, setIsAutoSyncingEmail] = useState(false);
+  const [isSyncedEmailsModalOpen, setIsSyncedEmailsModalOpen] = useState(false);
+  const [syncedEmailsData, setSyncedEmailsData] = useState<{
+    emails: EmailTransactionAlert[];
+    transactions: Transaction[];
+    durationLabel: string;
+  }>({ emails: [], transactions: [], durationLabel: 'Last 30 Days' });
 
-  // Automatic email synchronization routine triggered after sign-in
-  const autoSyncEmailAlerts = async (targetSheet?: SheetMetadata | null) => {
+  // 1. Automatic email synchronization routine triggered after sign-in: Last 30 Days
+  const autoSyncEmailAlerts = async (targetSheet?: SheetMetadata | null, duration: TimeRangeOption = '30_days') => {
     setIsAutoSyncingEmail(true);
-    showToast('Checking Gmail for recent card transaction alerts...', 'info');
+    showToast('Checking Gmail for recent card transaction alerts (Last 30 Days)...', 'info');
     try {
-      const emailAlerts = await searchRecentTransactionEmails('all', 'current_billing_cycle', billingCycleDay);
+      const emailAlerts = await searchRecentTransactionEmails('all', duration, billingCycleDay);
       if (emailAlerts && emailAlerts.length > 0) {
         const parsedTxs = await parseEmailsToTransactions(emailAlerts);
         if (parsedTxs.length > 0) {
@@ -203,16 +211,69 @@ export default function App() {
               console.warn('Auto-sync push to sheet notice:', sheetErr);
             }
           }
-          showToast(`Synced ${parsedTxs.length} transaction alert(s) from Gmail!`, 'success');
+          showToast(`Synced ${parsedTxs.length} transaction alert(s) from the last 30 days!`, 'success');
         } else {
-          showToast('No new unrecorded transaction alerts found in Gmail.', 'info');
+          showToast('No new unrecorded transaction alerts found in Gmail for the last 30 days.', 'info');
         }
       } else {
-        showToast('Gmail checked: No new transaction alerts in the current cycle.', 'info');
+        showToast('Gmail checked: No new transaction alerts found in the last 30 days.', 'info');
       }
     } catch (err: any) {
       console.warn('Auto email sync warning:', err);
       // Non-fatal, do not disturb user session
+    } finally {
+      setIsAutoSyncingEmail(false);
+    }
+  };
+
+  // 2, 3, 4, 5. Manual Sync Routine triggered by Sync Email Button
+  const handleManualEmailSync = async (duration: '30_days' | '45_days' | '60_days') => {
+    const durationLabels: Record<string, string> = {
+      '30_days': 'Last 30 Days',
+      '45_days': 'Last 45 Days',
+      '60_days': 'Last 60 Days'
+    };
+    const durationLabel = durationLabels[duration] || 'Selected Duration';
+
+    setIsAutoSyncingEmail(true);
+    showToast(`Scanning Gmail for bank transaction alerts (${durationLabel})...`, 'info');
+
+    try {
+      const emailAlerts = await searchRecentTransactionEmails('all', duration, billingCycleDay);
+
+      let parsedTxs: Transaction[] = [];
+      if (emailAlerts && emailAlerts.length > 0) {
+        parsedTxs = await parseEmailsToTransactions(emailAlerts);
+        if (parsedTxs.length > 0) {
+          // 4. Update existing email data without creating duplicates
+          await handleSyncExtractedTransactions(parsedTxs);
+
+          const activeSheet = connectedSheet;
+          if (activeSheet) {
+            try {
+              await syncNewTransactionsToSheet(activeSheet.spreadsheetId, parsedTxs, transactions);
+            } catch (sheetErr) {
+              console.warn('Sync push to sheet notice:', sheetErr);
+            }
+          }
+          showToast(`Synced ${parsedTxs.length} transaction alert(s) for ${durationLabel}!`, 'success');
+        } else {
+          showToast(`Found ${emailAlerts.length} alert email(s), but all transactions are already recorded.`, 'info');
+        }
+      } else {
+        showToast(`No transaction alert emails found for ${durationLabel}.`, 'info');
+      }
+
+      // 5. Display the synced emails in a clean, readable list view using existing UI structure
+      setSyncedEmailsData({
+        emails: emailAlerts || [],
+        transactions: parsedTxs,
+        durationLabel
+      });
+      setIsSyncedEmailsModalOpen(true);
+    } catch (err: any) {
+      console.error('Manual email sync error:', err);
+      showToast(err.message || 'Failed to sync emails from Gmail', 'error');
     } finally {
       setIsAutoSyncingEmail(false);
     }
@@ -248,9 +309,9 @@ export default function App() {
           refreshFromSheet(activeSheet);
         }
 
-        // Automatic Email Synchronization after successful Google Sign-in
+        // 1. Automatic Email Synchronization after successful Google Sign-in from last 30 days
         setTimeout(() => {
-          autoSyncEmailAlerts(activeSheet);
+          autoSyncEmailAlerts(activeSheet, '30_days');
         }, 800);
       }
     } catch (err: any) {
@@ -278,7 +339,11 @@ export default function App() {
     setUser(null);
     setToken(null);
     setNeedsAuth(true);
-    showToast('Signed out successfully', 'info');
+    setTransactions(DUMMY_TRANSACTIONS);
+    try {
+      localStorage.removeItem(LOCAL_STORAGE_TX_BACKUP_KEY);
+    } catch {}
+    showToast('Signed out successfully. Showing sample demo data.', 'info');
   };
 
   // Refresh from connected Google Sheet
@@ -307,9 +372,11 @@ export default function App() {
           showToast(`Google Sheet is empty. You can click "Push to Sheet" to push ${transactions.length} records, or click "Sync Email Alerts" for a fresh scan.`, 'info');
         } else {
           setTransactions([]);
-          try {
-            localStorage.setItem(LOCAL_STORAGE_TX_BACKUP_KEY, JSON.stringify([]));
-          } catch {}
+          if (user?.uid) {
+            try {
+              localStorage.setItem(`statementflow_user_txs_${user.uid}`, JSON.stringify([]));
+            } catch {}
+          }
           setLastSyncedAt(new Date().toISOString());
           showToast('Google Sheet is empty. Ready to sync all emails freshly!', 'info');
         }
@@ -549,9 +616,11 @@ export default function App() {
     const latestRules = loadUserRules();
     const updated = applyRulesToTransactions(transactions, latestRules);
     setTransactions(updated);
-    try {
-      localStorage.setItem(LOCAL_STORAGE_TX_BACKUP_KEY, JSON.stringify(updated));
-    } catch {}
+    if (user?.uid) {
+      try {
+        localStorage.setItem(`statementflow_user_txs_${user.uid}`, JSON.stringify(updated));
+      } catch {}
+    }
 
     if (connectedSheet) {
       try {
@@ -582,9 +651,11 @@ export default function App() {
             prev.map(t => (t.transaction_id === updated.transaction_id ? updated : t)),
             latestRules
           );
-          try {
-            localStorage.setItem(LOCAL_STORAGE_TX_BACKUP_KEY, JSON.stringify(applied));
-          } catch {}
+          if (user?.uid) {
+            try {
+              localStorage.setItem(`statementflow_user_txs_${user.uid}`, JSON.stringify(applied));
+            } catch {}
+          }
           return applied;
         });
 
@@ -751,12 +822,41 @@ export default function App() {
         isRefreshing={isRefreshing}
         lastSyncedAt={lastSyncedAt}
         isAutoSyncingEmail={isAutoSyncingEmail}
+        onSyncEmailDuration={handleManualEmailSync}
+        isSyncingEmail={isAutoSyncingEmail}
       />
 
       {/* Main Container */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+        {/* Demo Mode Banner when not logged in */}
+        {!user && (
+          <div className="p-4 sm:p-5 rounded-2xl bg-amber-50/90 border border-amber-200/90 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-xs">
+            <div className="flex items-start gap-3.5">
+              <div className="w-10 h-10 rounded-xl bg-amber-100 border border-amber-300 flex items-center justify-center text-amber-800 shrink-0 font-bold text-xs tracking-wider">
+                DEMO
+              </div>
+              <div>
+                <h4 className="font-bold text-sm text-amber-950 flex items-center gap-2">
+                  Viewing Sample Dummy Data
+                </h4>
+                <p className="text-xs text-amber-800 mt-0.5 max-w-2xl font-normal">
+                  Personal financial data is hidden until you sign in with Google. Connect your Google account to securely view, sync, and track your own credit card statements and Gmail alerts.
+                </p>
+              </div>
+            </div>
+
+            <button
+              onClick={handleLogin}
+              disabled={isLoggingIn}
+              className="self-start sm:self-auto px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-xl text-xs transition shadow-sm cursor-pointer shrink-0"
+            >
+              {isLoggingIn ? 'Connecting...' : 'Connect Google Account'}
+            </button>
+          </div>
+        )}
+
         {/* Banner if Google Sheet is not yet connected (Visible on tablet/desktop) */}
-        {!connectedSheet && (
+        {!connectedSheet && user && (
           <div className="hidden sm:flex p-4 sm:p-5 rounded-2xl bg-gradient-to-r from-teal-50 via-white to-sky-50 border border-teal-200/80 flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-xs">
             <div className="flex items-start gap-3.5">
               <div className="w-10 h-10 rounded-xl bg-teal-100 border border-teal-200 flex items-center justify-center text-teal-700 shrink-0 shadow-xs">
@@ -855,20 +955,13 @@ export default function App() {
                   </button>
                 </div>
 
-                {/* Primary Actions: Sync Emails & Sheet + Upload */}
+                {/* Primary Actions: Clearly Visible Sync Email (with Dropdown) + Upload */}
                 <div className="grid grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      autoSyncEmailAlerts(connectedSheet);
-                      refreshFromSheet();
-                    }}
-                    disabled={isAutoSyncingEmail || isRefreshing}
-                    className="flex items-center justify-center gap-2 py-2.5 px-3 bg-teal-600 hover:bg-teal-700 active:bg-teal-800 text-white font-bold rounded-xl text-xs shadow-xs transition disabled:opacity-50 cursor-pointer"
-                  >
-                    <RefreshCw className={`w-3.5 h-3.5 ${isAutoSyncingEmail || isRefreshing ? 'animate-spin' : ''}`} />
-                    <span>{isAutoSyncingEmail ? 'Syncing...' : 'Sync Emails & Sheet'}</span>
-                  </button>
+                  <EmailSyncButton
+                    onSync={handleManualEmailSync}
+                    isSyncing={isAutoSyncingEmail}
+                    variant="mobile"
+                  />
 
                   <button
                     type="button"
@@ -953,11 +1046,13 @@ export default function App() {
             />
 
             {/* Downside: Expense List Table */}
-            <ExpenseList
-              transactions={filteredTransactions}
-              onSelectTransaction={setSelectedTransaction}
-              onQuickChangeCategory={handleQuickChangeCategory}
-            />
+            <div id="expense-table-container">
+              <ExpenseList
+                transactions={filteredTransactions}
+                onSelectTransaction={setSelectedTransaction}
+                onQuickChangeCategory={handleQuickChangeCategory}
+              />
+            </div>
           </div>
         </div>
       </main>
@@ -975,6 +1070,20 @@ export default function App() {
           </div>
         </div>
       </footer>
+
+      {/* Synced Emails List View Modal (Requirement 5) */}
+      <SyncedEmailsModal
+        isOpen={isSyncedEmailsModalOpen}
+        onClose={() => setIsSyncedEmailsModalOpen(false)}
+        syncedEmails={syncedEmailsData.emails}
+        syncedTransactions={syncedEmailsData.transactions}
+        durationLabel={syncedEmailsData.durationLabel}
+        onViewInTransactions={() => {
+          setIsSyncedEmailsModalOpen(false);
+          const el = document.getElementById('expense-table-container');
+          if (el) el.scrollIntoView({ behavior: 'smooth' });
+        }}
+      />
 
       {/* Upload Statement Modal */}
       {isUploadModalOpen && (

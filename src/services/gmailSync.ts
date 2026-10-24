@@ -114,6 +114,7 @@ export type TimeRangeOption =
   | '7_days'
   | '14_days'
   | '30_days'
+  | '45_days'
   | '60_days'
   | '90_days'
   | 'all'
@@ -192,6 +193,10 @@ export function buildDateRangeClause(timeRange: TimeRangeOption, cycleEndDay: nu
 
   if (timeRange === '30_days' || timeRange === 30 || timeRange === '30') {
     return 'newer_than:30d';
+  }
+
+  if (timeRange === '45_days' || timeRange === 45 || timeRange === '45') {
+    return 'newer_than:45d';
   }
 
   if (timeRange === '60_days' || timeRange === 60 || timeRange === '60') {

@@ -14,6 +14,7 @@ import {
   Mail,
   Tag
 } from 'lucide-react';
+import { EmailSyncButton } from './EmailSyncButton';
 
 interface NavbarProps {
   user: User | null;
@@ -32,6 +33,8 @@ interface NavbarProps {
   isRefreshing: boolean;
   lastSyncedAt: string | null;
   isAutoSyncingEmail?: boolean;
+  onSyncEmailDuration?: (duration: '30_days' | '45_days' | '60_days') => Promise<void>;
+  isSyncingEmail?: boolean;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -50,7 +53,9 @@ export const Navbar: React.FC<NavbarProps> = ({
   onPushToSheet,
   isRefreshing,
   lastSyncedAt,
-  isAutoSyncingEmail = false
+  isAutoSyncingEmail = false,
+  onSyncEmailDuration,
+  isSyncingEmail = false
 }) => {
   return (
     <header className="sticky top-0 z-30 bg-white/95 backdrop-blur-md border-b border-slate-200/90 text-slate-800 shadow-xs">
@@ -112,13 +117,24 @@ export const Navbar: React.FC<NavbarProps> = ({
               </div>
             )}
 
+            {/* Clearly visible Sync Email Button immediately after login (tablet/desktop) */}
+            {user && onSyncEmailDuration && (
+              <div className="hidden sm:block shrink-0">
+                <EmailSyncButton
+                  onSync={onSyncEmailDuration}
+                  isSyncing={isSyncingEmail || isAutoSyncingEmail}
+                  variant="navbar"
+                />
+              </div>
+            )}
+
             {/* Upload Statement Primary CTA (Visible on tablet/desktop) */}
             <button
               onClick={onOpenUploadModal}
-              className="hidden sm:flex items-center gap-1.5 bg-teal-600 hover:bg-teal-700 active:bg-teal-800 text-white px-3.5 py-1.5 sm:py-2 rounded-xl text-xs font-semibold shadow-xs transition cursor-pointer shrink-0"
+              className="hidden sm:flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 active:bg-slate-300 text-slate-800 border border-slate-300 px-3.5 py-1.5 sm:py-2 rounded-xl text-xs font-semibold shadow-xs transition cursor-pointer shrink-0"
               title="Upload Statement PDF or CSV"
             >
-              <Upload className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" />
+              <Upload className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-teal-600 shrink-0" />
               <span>Upload Statement</span>
             </button>
 

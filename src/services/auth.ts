@@ -9,9 +9,49 @@ import {
 } from 'firebase/auth';
 import firebaseConfig from '../../firebase-applet-config.json';
 
+const getInitialFirebaseConfig = () => {
+  try {
+    if (typeof window !== 'undefined') {
+      const custom = localStorage.getItem('statementflow_custom_firebase_config');
+      if (custom) {
+        const parsed = JSON.parse(custom);
+        if (parsed.apiKey && (parsed.projectId || parsed.authDomain)) {
+          return parsed;
+        }
+      }
+    }
+  } catch {}
+  return firebaseConfig;
+};
+
+const activeConfig = getInitialFirebaseConfig();
+
 // Initialize Firebase App instance safely (prevent duplicate initialization)
-const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
+const app = getApps().length > 0 ? getApp() : initializeApp(activeConfig);
 export const auth = getAuth(app);
+
+export const getActiveProjectId = (): string => {
+  return activeConfig.projectId || 'gen-lang-client-0056967119';
+};
+
+export const setCustomFirebaseConfig = (config: Record<string, string> | null) => {
+  try {
+    if (config) {
+      localStorage.setItem('statementflow_custom_firebase_config', JSON.stringify(config));
+    } else {
+      localStorage.removeItem('statementflow_custom_firebase_config');
+    }
+  } catch {}
+};
+
+export const getCustomFirebaseConfig = (): Record<string, string> | null => {
+  try {
+    const raw = localStorage.getItem('statementflow_custom_firebase_config');
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+};
 
 export const SCOPES = [
   'https://www.googleapis.com/auth/spreadsheets',
