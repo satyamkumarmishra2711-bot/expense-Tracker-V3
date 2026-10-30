@@ -135,6 +135,17 @@ export const ExpenseList: React.FC<ExpenseListProps> = ({
                 </div>
               </th>
 
+              <th className="py-3.5 px-4 text-right cursor-pointer hover:text-slate-900" onClick={() => handleSort('amount')}>
+                <div className="flex items-center justify-end gap-1.5">
+                  <span>Amount</span>
+                  {sortField === 'amount' ? (
+                    sortOrder === 'asc' ? <ArrowUp className="w-3.5 h-3.5 text-teal-600" /> : <ArrowDown className="w-3.5 h-3.5 text-teal-600" />
+                  ) : (
+                    <ArrowUpDown className="w-3.5 h-3.5 opacity-40" />
+                  )}
+                </div>
+              </th>
+
               <th className="py-3.5 px-4 cursor-pointer hover:text-slate-900" onClick={() => handleSort('category')}>
                 <div className="flex items-center gap-1.5">
                   <span>Category</span>
@@ -150,17 +161,6 @@ export const ExpenseList: React.FC<ExpenseListProps> = ({
                 <div className="flex items-center gap-1.5">
                   <span>Card / Statement</span>
                   {sortField === 'card' ? (
-                    sortOrder === 'asc' ? <ArrowUp className="w-3.5 h-3.5 text-teal-600" /> : <ArrowDown className="w-3.5 h-3.5 text-teal-600" />
-                  ) : (
-                    <ArrowUpDown className="w-3.5 h-3.5 opacity-40" />
-                  )}
-                </div>
-              </th>
-
-              <th className="py-3.5 px-4 text-right cursor-pointer hover:text-slate-900" onClick={() => handleSort('amount')}>
-                <div className="flex items-center justify-end gap-1.5">
-                  <span>Amount</span>
-                  {sortField === 'amount' ? (
                     sortOrder === 'asc' ? <ArrowUp className="w-3.5 h-3.5 text-teal-600" /> : <ArrowDown className="w-3.5 h-3.5 text-teal-600" />
                   ) : (
                     <ArrowUpDown className="w-3.5 h-3.5 opacity-40" />
@@ -217,6 +217,16 @@ export const ExpenseList: React.FC<ExpenseListProps> = ({
                       </div>
                     </td>
 
+                    {/* Amount */}
+                    <td className="py-3.5 px-4 text-right whitespace-nowrap">
+                      <span className={`font-bold text-sm ${isCredit ? 'text-emerald-700' : 'text-slate-900'}`}>
+                        {isCredit ? '+' : '-'}{formatCurrency(tx.amount)}
+                      </span>
+                      <div className="text-[10px] uppercase font-semibold text-slate-400">
+                        {isCredit ? 'Credit / Refund' : 'Debit'}
+                      </div>
+                    </td>
+
                     {/* Category with inline selector */}
                     <td className="py-3.5 px-4 whitespace-nowrap" onClick={e => e.stopPropagation()}>
                       <div className="relative inline-block">
@@ -239,16 +249,6 @@ export const ExpenseList: React.FC<ExpenseListProps> = ({
                       <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-100 border border-slate-200 text-slate-700 text-[11px]">
                         <CreditCard className="w-3 h-3 text-teal-600" />
                         <span className="truncate max-w-[150px]" title={tx.card}>{tx.card}</span>
-                      </div>
-                    </td>
-
-                    {/* Amount */}
-                    <td className="py-3.5 px-4 text-right whitespace-nowrap">
-                      <span className={`font-bold text-sm ${isCredit ? 'text-emerald-700' : 'text-slate-900'}`}>
-                        {isCredit ? '+' : '-'}{formatCurrency(tx.amount)}
-                      </span>
-                      <div className="text-[10px] uppercase font-semibold text-slate-400">
-                        {isCredit ? 'Credit / Refund' : 'Debit'}
                       </div>
                     </td>
 
