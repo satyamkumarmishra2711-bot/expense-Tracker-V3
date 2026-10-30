@@ -62,12 +62,48 @@ export const SCOPES = [
 const provider = new GoogleAuthProvider();
 SCOPES.forEach(scope => provider.addScope(scope));
 
-// Memory caching for OAuth Access Token (strictly in-memory, never in localStorage)
+// OAuth Access Token session persistence
+const OAUTH_TOKEN_KEY = 'statementflow_google_access_token';
+const OAUTH_USER_EMAIL_KEY = 'statementflow_google_user_email';
+
 let cachedAccessToken: string | null = null;
 let isSigningIn = false;
 
+const getStoredAccessToken = (): string | null => {
+  try {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem(OAUTH_TOKEN_KEY);
+    }
+  } catch {}
+  return null;
+};
+
+const storeAccessToken = (token: string, email?: string | null) => {
+  try {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(OAUTH_TOKEN_KEY, token);
+      if (email) {
+        localStorage.setItem(OAUTH_USER_EMAIL_KEY, email);
+      }
+    }
+  } catch (e) {
+    console.warn('Failed to persist OAuth access token', e);
+  }
+};
+
+const clearStoredAccessToken = () => {
+  try {
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem(OAUTH_TOKEN_KEY);
+      localStorage.removeItem(OAUTH_USER_EMAIL_KEY);
+    }
+  } catch (e) {
+    console.warn('Failed to remove persisted OAuth access token', e);
+  }
+};
+
 /**
- * Initializes Firebase Auth state listener and keeps in-memory token state synced.
+ * Initializes Firebase Auth state listener and keeps session & token state synced across refreshes.
  */
 export const initAuth = (
   onAuthSuccess?: (user: User, token: string) => void,
@@ -75,15 +111,19 @@ export const initAuth = (
 ) => {
   return onAuthStateChanged(auth, async (user: User | null) => {
     if (user) {
-      if (cachedAccessToken) {
-        if (onAuthSuccess) onAuthSuccess(user, cachedAccessToken);
+      // Check in-memory cache first, then restore persisted token from localStorage
+      const token = cachedAccessToken || getStoredAccessToken();
+      if (token) {
+        cachedAccessToken = token;
+        if (onAuthSuccess) onAuthSuccess(user, token);
       } else if (!isSigningIn) {
-        // Token is lost from memory (e.g. page refresh), require re-sign-in to obtain fresh Workspace OAuth token
+        // Only trigger failure if there is truly no token and user is not currently in sign-in flow
         cachedAccessToken = null;
         if (onAuthFailure) onAuthFailure();
       }
     } else {
       cachedAccessToken = null;
+      clearStoredAccessToken();
       if (onAuthFailure) onAuthFailure();
     }
   });
@@ -102,6 +142,7 @@ export const googleSignIn = async (): Promise<{ user: User; accessToken: string 
     }
 
     cachedAccessToken = credential.accessToken;
+    storeAccessToken(credential.accessToken, result.user.email);
     return { user: result.user, accessToken: cachedAccessToken };
   } catch (error: unknown) {
     console.error('Google Sign-In Error:', error);
@@ -112,26 +153,38 @@ export const googleSignIn = async (): Promise<{ user: User; accessToken: string 
 };
 
 /**
- * Returns the in-memory cached access token.
+ * Returns the access token from in-memory cache or persisted session.
  */
 export const getAccessToken = async (): Promise<string | null> => {
-  return cachedAccessToken;
+  if (cachedAccessToken) return cachedAccessToken;
+  const stored = getStoredAccessToken();
+  if (stored) {
+    cachedAccessToken = stored;
+    return stored;
+  }
+  return null;
 };
 
 /**
- * Sets or updates the in-memory access token.
+ * Sets or updates the access token in memory and persisted storage.
  */
 export const setCachedAccessToken = (token: string | null) => {
   cachedAccessToken = token;
+  if (token) {
+    storeAccessToken(token);
+  } else {
+    clearStoredAccessToken();
+  }
 };
 
 /**
- * Signs the user out and wipes in-memory tokens.
+ * Signs the user out, clears Firebase Auth session, and wipes persisted tokens.
  */
 export const logout = async () => {
   try {
     await signOut(auth);
   } finally {
     cachedAccessToken = null;
+    clearStoredAccessToken();
   }
 };

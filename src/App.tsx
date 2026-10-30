@@ -143,7 +143,7 @@ export default function App() {
 
   // Sync to local backup ONLY when user is authenticated (user-scoped storage key)
   useEffect(() => {
-    if (user && user.uid) {
+    if (user && user.uid && transactions !== DUMMY_TRANSACTIONS) {
       try {
         localStorage.setItem(`statementflow_user_txs_${user.uid}`, JSON.stringify(transactions));
       } catch (e) {
@@ -969,10 +969,11 @@ export default function App() {
                   </div>
                   <button
                     onClick={handleLogout}
-                    className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition shrink-0 cursor-pointer"
-                    title="Sign out"
+                    className="flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-rose-700 bg-rose-50 hover:bg-rose-100 active:bg-rose-200 border border-rose-200 rounded-lg transition shrink-0 cursor-pointer shadow-2xs"
+                    title="Sign Out"
                   >
-                    <LogOut className="w-4 h-4" />
+                    <LogOut className="w-3.5 h-3.5 text-rose-600 shrink-0" />
+                    <span>Sign Out</span>
                   </button>
                 </div>
 
