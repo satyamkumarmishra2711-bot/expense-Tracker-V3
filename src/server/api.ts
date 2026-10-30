@@ -283,11 +283,20 @@ function extractEmailsLocallyOnServer(emails: any[]): any[] {
 
       // Extract Merchant
       let merchant = '';
-      const sbiAtMerchantMatch = trail.match(/(?:spent\s+on\s+your\s+[^.]+?|spent)\s+at\s+([A-Za-z0-9\s._\-&]{2,40}?)\s+on\s+\d{1,2}[-/]/i);
+      const sbiAtMerchantMatch = trail.match(/spent\s+(?:on\s+your\s+[^.]+?\s+)?at\s+([A-Za-z0-9\s._\-&]{2,50}?)(?:\s+on\s+\d{1,2}[-/.]|\s+on|\s+via|\s*\(Ref|\.|\n|\r|$)/i);
       if (sbiAtMerchantMatch) {
         const raw = sbiAtMerchantMatch[1].trim();
-        if (!/dear|cardholder|this\s+is|you\s+have|inform|credit\s+card/i.test(raw)) {
+        if (!/^(?:dear|cardholder|customer|your|this\s+is|you\s+have|inform|credit\s+card)/i.test(raw)) {
           merchant = cleanMerchantName(raw);
+        }
+      }
+      if (!merchant) {
+        const generalAtMatch = trail.match(/\bat\s+([A-Za-z0-9\s._\-&]{2,40}?)(?:\s+on\s+\d{1,2}[-/.]|\s+on\s+[A-Za-z]{3}|\s+via|\s*\(Ref|\.|\n|\r|$)/i);
+        if (generalAtMatch) {
+          const raw = generalAtMatch[1].trim();
+          if (!/^(?:dear|cardholder|customer|your|this|you|inform|bank|sbi|icici|hdfc|axis)/i.test(raw)) {
+            merchant = cleanMerchantName(raw);
+          }
         }
       }
       if (!merchant) {
@@ -303,11 +312,20 @@ function extractEmailsLocallyOnServer(emails: any[]): any[] {
         merchant = cleanMerchantName(parts[parts.length - 1]);
       }
 
-      const catRes = categorizeTransaction(`${merchant} ${trail}`);
-      const finalCategory = catRes.category || 'Other';
-      const finalMerchant = (catRes.merchant && catRes.merchant !== 'Unknown Merchant' && catRes.merchant !== 'School / Education Fee' && catRes.merchant !== 'School Fee')
-        ? catRes.merchant
-        : (merchant || 'UPI Transaction');
+      // Determine Category by applying rules to the extracted merchant name (Requirements 3 & 4)
+      let finalCategory = 'Others';
+      const catRes = categorizeTransaction(merchant);
+      if (catRes.category && catRes.category !== 'Others' && catRes.category !== 'Other') {
+        finalCategory = catRes.category;
+      } else {
+        const subjRes = categorizeTransaction(subject);
+        if (subjRes.category && subjRes.category !== 'Others' && subjRes.category !== 'Other') {
+          finalCategory = subjRes.category;
+        } else {
+          finalCategory = 'Others';
+        }
+      }
+      const finalMerchant = merchant || 'UPI Transaction';
 
       // Date
       let dateStr = new Date().toISOString().split('T')[0];

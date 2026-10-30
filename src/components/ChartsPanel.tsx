@@ -56,6 +56,7 @@ const CATEGORY_HEX_COLORS: Record<string, string> = {
   'Fees & Charges': '#dc2626',
   'Refund & Cashback': '#16a34a',
   'Personal Care': '#db2777',
+  'Others': '#94a3b8',
   'Other': '#94a3b8'
 };
 

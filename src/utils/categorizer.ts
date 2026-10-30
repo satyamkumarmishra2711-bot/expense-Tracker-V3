@@ -34,6 +34,7 @@ export const DEFAULT_CATEGORIES = [
   'Fees & Charges',
   'Refund & Cashback',
   'Personal Care',
+  'Others',
   'Other'
 ] as const;
 
@@ -71,6 +72,7 @@ export const CATEGORY_COLORS: Record<string, { bg: string; text: string; border:
   'Fees & Charges': { bg: 'bg-red-500/10', text: 'text-red-600 dark:text-red-400', border: 'border-red-500/20', badge: 'bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300' },
   'Refund & Cashback': { bg: 'bg-green-500/10', text: 'text-green-600 dark:text-green-400', border: 'border-green-500/20', badge: 'bg-green-100 text-green-800 dark:bg-green-950 dark:text-green-300' },
   'Personal Care': { bg: 'bg-pink-500/10', text: 'text-pink-600 dark:text-pink-400', border: 'border-pink-500/20', badge: 'bg-pink-100 text-pink-800 dark:bg-pink-950 dark:text-pink-300' },
+  'Others': { bg: 'bg-zinc-500/10', text: 'text-zinc-600 dark:text-zinc-400', border: 'border-zinc-500/20', badge: 'bg-zinc-100 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-300' },
   'Other': { bg: 'bg-zinc-500/10', text: 'text-zinc-600 dark:text-zinc-400', border: 'border-zinc-500/20', badge: 'bg-zinc-100 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-300' }
 };
 
@@ -99,8 +101,8 @@ export const DEFAULT_RULES: CategoryRule[] = [
   // Wifi & Broadband
   { id: 'rule_wifi', pattern: 'act broadband|actbroadband|spectranet|airtel broadband|airtelbroadband|jiofiber|internet bill|internetbill', category: 'Wifi', merchant_name: 'Wifi / Broadband' },
 
-  // Insurance
-  { id: 'rule_insurance', pattern: 'lic|star health|starhealth|niva bupa|nivabupa|hdfc ergo|hdfcergo|icici lombard|icicilombard|bajaj allianz|bajajallianz|life insurance|lifeinsurance|health insurance|healthinsurance|care health|carehealth|policy premium|policypremium|insurance premium|insurancepremium', category: 'Insurance', merchant_name: 'Insurance' },
+  // Insurance (strict patterns - no bare 'lic' to avoid false positives with 'click' or 'applicable')
+  { id: 'rule_insurance', pattern: 'lic of india|life insurance corporation|lic premium|lic india|star health|starhealth|niva bupa|nivabupa|hdfc ergo|hdfcergo|icici lombard|icicilombard|bajaj allianz|bajajallianz|life insurance|lifeinsurance|health insurance|healthinsurance|care health|carehealth|policy premium|policypremium|insurance premium|insurancepremium', category: 'Insurance' },
 
   // Investments
   { id: 'rule_investments', pattern: 'zerodha|groww|upstox|angel one|angelone|mutual fund|mutualfund|mutual funds|mutualfunds|sip|nps|small case|smallcase|paytm money|paytmmoney|icici direct|icicidirect|hdfc securities|hdfcsecurities|kotak securities|kotaksecurities|motilal oswal|motilaloswal|stocks|equity investment|equityinvestment|fixed deposit|fixeddeposit|fd|rd|recurring deposit|recurringdeposit', category: 'Investments', merchant_name: 'Investments & Stocks' },
@@ -174,8 +176,14 @@ export function loadUserRules(): CategoryRule[] {
     if (saved) {
       const parsed = JSON.parse(saved);
       if (Array.isArray(parsed) && parsed.length > 0) {
-        // Filter out any stale/broken rules that matched generic "fees" or "upi"
-        const cleanedSaved = parsed.filter(p => p.pattern !== 'fees' && p.pattern !== 'upi' && !p.pattern.includes('|fees|'));
+        // Filter out any stale/broken rules that matched generic "fees", "upi", or bare "lic"
+        const cleanedSaved = parsed.filter(p =>
+          p.pattern !== 'fees' &&
+          p.pattern !== 'upi' &&
+          p.pattern !== 'lic' &&
+          p.id !== 'rule_insurance' &&
+          !p.pattern.includes('|fees|')
+        );
         return [...cleanedSaved, ...DEFAULT_RULES.filter(dr => !cleanedSaved.some((pr: CategoryRule) => pr.id === dr.id))];
       }
     }
@@ -204,6 +212,13 @@ export function saveUserRule(newRule: Omit<CategoryRule, 'id'>): CategoryRule[] 
 }
 
 /**
+ * Escapes regex special characters.
+ */
+function escapeRegex(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
  * Strips card-branding noise and generic email boilerplate
  * so that pattern matching focuses only on real merchant/transaction text.
  */
@@ -227,7 +242,7 @@ function stripCardBrandNoise(text: string): string {
 
 /**
  * Categorizes a transaction and extracts a clean merchant name.
- * If no specific rule matches, it cleanly tags the transaction as 'Other'.
+ * If no specific rule matches, it assigns the category 'Others'.
  */
 export function categorizeTransaction(
   rawText: string,
@@ -240,7 +255,7 @@ export function categorizeTransaction(
 
   if (!alphanumericOnly || alphanumericOnly.length < 2) {
     return {
-      category: 'Other',
+      category: 'Others',
       merchant: cleanMerchantName(filteredText || rawText)
     };
   }
@@ -252,26 +267,31 @@ export function categorizeTransaction(
     const keywords = rule.pattern
       .split(/[|,]/)
       .map(k => k.trim().toLowerCase())
-      .filter(k => k.length >= 3 && k !== 'fees' && k !== 'upi');
+      .filter(k => k.length >= 2 && k !== 'fees' && k !== 'upi');
 
     const isMatch = keywords.some(kw => {
+      // Require word boundary for short keywords to prevent false positives (e.g. "lic" in "click"/"applicable")
+      if (kw.length <= 4) {
+        const boundaryRegex = new RegExp(`(?:^|[^a-z0-9])${escapeRegex(kw)}(?:$|[^a-z0-9])`, 'i');
+        return boundaryRegex.test(lowerDesc);
+      }
       if (lowerDesc.includes(kw)) return true;
       const kwAlpha = kw.replace(/[^a-z0-9]/g, '');
-      if (kwAlpha.length >= 3 && alphanumericOnly.includes(kwAlpha)) return true;
+      if (kwAlpha.length >= 4 && alphanumericOnly.includes(kwAlpha)) return true;
       return false;
     });
 
     if (isMatch) {
       return {
-        category: rule.category || rule.pattern,
+        category: rule.category || 'Others',
         merchant: rule.merchant_name || cleanMerchantName(filteredText)
       };
     }
   }
 
-  // Fallback heuristics: If not relevant, tag as Other
+  // Fallback: If no matching category rule is found, assign the category Others
   return {
-    category: 'Other',
+    category: 'Others',
     merchant: cleanMerchantName(filteredText || rawText)
   };
 }
@@ -299,7 +319,7 @@ export function cleanMerchantName(raw: string): string {
     .trim();
 
   // If cleaned string is empty or contains only noise words
-  if (!cleaned || /^(school|dear|cardholder|customer|inform|transaction|check\s*details|bank|credit\s*card)$/i.test(cleaned)) {
+  if (!cleaned || /^(school|dear|cardholder|customer|inform|transaction|check\s*details|bank|credit\s*card|insurance)$/i.test(cleaned)) {
     return 'UPI Transaction';
   }
 
@@ -316,55 +336,108 @@ export function cleanMerchantName(raw: string): string {
 
 /**
  * Re-evaluates all transactions against the latest categorization rules
- * and auto-updates their Category & Merchant names based on text present in
- * description, merchant, email body, notes, etc.
+ * and auto-updates their Category & Merchant names based on extracted merchant names.
  */
 export function applyRulesToTransactions(
   transactions: any[],
   rules: CategoryRule[] = loadUserRules()
 ): any[] {
   return transactions.map(t => {
-    // If user manually edited category, preserve it unless it was the faulty School auto-tag
+    // 1. Recover merchant if it was previously corrupted into "Insurance" or empty
     let extractedMerchant = '';
     if (t.description && t.description.includes(' - ')) {
       const parts = t.description.split(' - ');
       if (parts.length > 1) {
         const candidate = parts[parts.length - 1].trim();
-        if (!/school\s*\/?\s*education\s*fee/i.test(candidate)) {
+        if (!/^(?:school\s*\/?\s*education\s*fee|insurance|other|others|upi\s*transaction)$/i.test(candidate)) {
           extractedMerchant = candidate;
         }
       }
     }
 
-    const currentMerchant = (t.merchant && t.merchant !== 'BPCL Fuel' && t.merchant !== 'Primary Card' && !/school\s*\/?\s*education\s*fee/i.test(t.merchant))
-      ? t.merchant
+    const rawMerchant = (t.merchant && !/^(?:school\s*\/?\s*education\s*fee|insurance|other|others|bpcl\s*fuel|primary\s*card)$/i.test(t.merchant.trim()))
+      ? t.merchant.trim()
       : (extractedMerchant || '');
 
-    // Clean source text of faulty tags before categorizing
-    const sanitizedDesc = (t.description || '').replace(/-\s*School\s*\/?\s*Education\s*Fee/gi, '').replace(/-\s*School\s*Fee/gi, '');
-    const sanitizedNotes = (t.notes || '').replace(/•\s*School\s*\/?\s*Education\s*Fee/gi, '').replace(/•\s*School\s*Fee/gi, '');
-    const sanitizedEmail = (t.email_body || '').replace(/School\s*\/?\s*Education\s*Fee/gi, '');
+    // Extract merchant from email body / notes if missing or corrupted
+    let merchantToTest = rawMerchant;
+    if (!merchantToTest || /^(?:insurance|other|others|upi\s*transaction)$/i.test(merchantToTest)) {
+      const source = `${t.email_body || ''} ${t.notes || ''} ${t.description || ''}`;
+      // SBI & generic format: "spent on your ... at <Merchant> on/via" or "spent at <Merchant> on/via"
+      const sbiMatch = source.match(/spent\s+(?:on\s+your\s+[^.]+?\s+)?at\s+([A-Za-z0-9\s._\-&]{2,50}?)(?:\s+on\s+\d{1,2}[-/.]|\s+on|\s+via|\s*\(Ref|\.|\n|\r|$)/i);
+      if (sbiMatch) {
+        const candidate = cleanMerchantName(sbiMatch[1]);
+        if (candidate && candidate !== 'UPI Transaction') {
+          merchantToTest = candidate;
+        }
+      }
 
-    // Scan all text sources
-    const combined = `${extractedMerchant} ${currentMerchant} ${sanitizedDesc} ${sanitizedEmail} ${sanitizedNotes} ${t.source_file || ''}`;
-    const result = categorizeTransaction(combined, rules);
-    
-    // Final merchant
-    let finalMerchant = currentMerchant;
-    if (result.merchant && result.merchant !== 'Unknown Merchant' && !result.merchant.toLowerCase().startsWith('dear') && result.merchant !== 'BPCL Fuel' && result.merchant !== 'School / Education Fee' && result.merchant !== 'School Fee') {
+      if (!merchantToTest || /^(?:insurance|other|others|upi\s*transaction)$/i.test(merchantToTest)) {
+        const hdfcMatch = source.match(/towards\s+VPA\s+[^\s(]+\s*\(([^)]+)\)/i);
+        if (hdfcMatch) {
+          const candidate = cleanMerchantName(hdfcMatch[1]);
+          if (candidate && candidate !== 'UPI Transaction') {
+            merchantToTest = candidate;
+          }
+        }
+      }
+
+      if (!merchantToTest || /^(?:insurance|other|others|upi\s*transaction)$/i.test(merchantToTest)) {
+        const iciciMatch = source.match(/Info:\s*([A-Za-z0-9\s._\-&]+?)(?:\.|\n|\r|$)/i);
+        if (iciciMatch) {
+          const candidate = cleanMerchantName(iciciMatch[1]);
+          if (candidate && candidate !== 'UPI Transaction') {
+            merchantToTest = candidate;
+          }
+        }
+      }
+    }
+
+    if (!merchantToTest || /^(?:insurance|other|others)$/i.test(merchantToTest)) {
+      merchantToTest = cleanMerchantName(t.description || '') || 'UPI Transaction';
+    }
+
+    // 2. If user explicitly changed category and marked user_overridden_category, preserve unless it was the corrupted 'Insurance'
+    if (t.user_overridden_category && t.category && t.category !== 'Insurance') {
+      return {
+        ...t,
+        merchant: merchantToTest,
+        category: t.category
+      };
+    }
+
+    // 3. Apply category rules to the extracted merchant name first (Requirement 3)
+    let result = categorizeTransaction(merchantToTest, rules);
+
+    // If merchant alone was not matched, also test the clean description title
+    if (result.category === 'Others' || result.category === 'Other') {
+      const cleanDescTitle = (t.description || '').split(' - ')[0] || '';
+      const strippedDesc = stripCardBrandNoise(cleanDescTitle);
+      if (strippedDesc && strippedDesc.length >= 3) {
+        const descResult = categorizeTransaction(strippedDesc, rules);
+        if (descResult.category !== 'Others' && descResult.category !== 'Other') {
+          result = descResult;
+        }
+      }
+    }
+
+    // Final merchant: preserve extracted merchant name unless the rule specifically provides a branded merchant name
+    let finalMerchant = merchantToTest;
+    if (result.merchant && !/^(?:unknown\s*merchant|upi\s*transaction|others?|insurance)$/i.test(result.merchant)) {
       finalMerchant = result.merchant;
-    } else if (extractedMerchant) {
-      finalMerchant = cleanMerchantName(extractedMerchant);
-    } else if (!finalMerchant || /school\s*\/?\s*education\s*fee/i.test(finalMerchant)) {
-      finalMerchant = cleanMerchantName(sanitizedDesc) || 'UPI Transaction';
+    }
+
+    // Clean description to remove any trailing " - Insurance" artifact
+    let cleanDescription = t.description || '';
+    if (cleanDescription.endsWith(' - Insurance')) {
+      cleanDescription = cleanDescription.replace(/\s*-\s*Insurance$/i, ` - ${finalMerchant}`);
     }
 
     return {
       ...t,
-      description: sanitizedDesc || t.description,
-      notes: sanitizedNotes || t.notes,
-      category: result.category || 'Other',
-      merchant: finalMerchant || 'UPI Transaction'
+      description: cleanDescription,
+      merchant: finalMerchant,
+      category: result.category || 'Others'
     };
   });
 }

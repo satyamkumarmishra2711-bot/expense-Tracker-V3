@@ -597,17 +597,38 @@ export default function App() {
       updated_date: new Date().toISOString()
     };
 
-    setTransactions(prev => prev.map(t => (t.transaction_id === tx.transaction_id ? updated : t)));
+    if (tx.merchant && !/^(?:upi\s*transaction|unknown\s*merchant)$/i.test(tx.merchant.trim())) {
+      saveUserRule({
+        pattern: tx.merchant.trim().toLowerCase(),
+        category: newCategory,
+        merchant_name: tx.merchant.trim()
+      });
+    }
+
+    const latestRules = loadUserRules();
+    const updatedList = applyRulesToTransactions(
+      transactions.map(t => (t.transaction_id === tx.transaction_id ? updated : t)),
+      latestRules
+    );
+    setTransactions(updatedList);
+    if (user?.uid) {
+      try {
+        localStorage.setItem(`statementflow_user_txs_${user.uid}`, JSON.stringify(updatedList));
+      } catch {}
+    }
 
     // Sync to sheet in background
     const accessToken = await getAccessToken();
     if (connectedSheet && accessToken) {
       try {
         await updateTransactionInSheet(connectedSheet.spreadsheetId, updated, connectedSheet.sheetName);
-        showToast(`Category updated to "${newCategory}" in Google Sheet`);
+        await syncRulesToSheet(connectedSheet.spreadsheetId, latestRules);
+        showToast(`Category updated to "${newCategory}" & saved rule for "${tx.merchant}"`);
       } catch (err: any) {
         console.error('Quick update sheet error:', err);
       }
+    } else {
+      showToast(`Category updated to "${newCategory}" & saved rule for "${tx.merchant}"`);
     }
   };
 

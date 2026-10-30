@@ -604,12 +604,23 @@ export function extractBankAlertDetails(text: string, subject: string, primaryLa
 
   // 4. Precision Merchant Extraction across banks
 
-  // Pattern A: "spent at <Merchant> on" or "spent on your ... at <Merchant> on"
-  const spentAtMatch = text.match(/(?:spent\s+on\s+your\s+[^.]+?|spent)\s+at\s+([A-Za-z0-9\s._\-&]{2,40}?)(?:\s+on|\s+via|\.|\n|$)/i);
-  if (spentAtMatch) {
-    const raw = spentAtMatch[1].trim();
-    if (!/dear|cardholder|this\s+is|you\s+have|inform|credit\s+card|check\s+details/i.test(raw)) {
+  // Pattern A: SBI Credit Card / debit / spent at
+  // Example: "Rs.30.00 spent on your SBI Credit Card ending with 1035 at Vadilal on 23-10-26 via UPI (Ref No. 317560074549)."
+  const sbiSpentAtMatch = text.match(/spent\s+(?:on\s+your\s+[^.]+?\s+)?at\s+([A-Za-z0-9\s._\-&]{2,50}?)(?:\s+on\s+\d{1,2}[-/.]|\s+on|\s+via|\s*\(Ref|\.|\n|\r|$)/i);
+  if (sbiSpentAtMatch) {
+    const raw = sbiSpentAtMatch[1].trim();
+    if (!/^(?:dear|cardholder|customer|your|this\s+is|you\s+have|inform|credit\s+card|check\s+details)/i.test(raw)) {
       merchant = cleanMerchantName(raw);
+    }
+  }
+
+  if (!merchant) {
+    const generalAtMatch = text.match(/\bat\s+([A-Za-z0-9\s._\-&]{2,40}?)(?:\s+on\s+\d{1,2}[-/.]|\s+on\s+[A-Za-z]{3}|\s+via|\s*\(Ref|\.|\n|\r|$)/i);
+    if (generalAtMatch) {
+      const raw = generalAtMatch[1].trim();
+      if (!/^(?:dear|cardholder|customer|your|this|you|inform|bank|sbi|icici|hdfc|axis)/i.test(raw)) {
+        merchant = cleanMerchantName(raw);
+      }
     }
   }
 
@@ -675,10 +686,10 @@ export function extractBankAlertDetails(text: string, subject: string, primaryLa
     }
   }
 
-  // Fallback via Categorizer
+  // Fallback via Categorizer - NEVER assign "Insurance" or generic noise as merchant
   if (!merchant || /dear\s+cardholder|you\s+have\s+done|transaction\s+alert|check\s+details/i.test(merchant)) {
     const catRes = categorizeTransaction(text);
-    if (catRes.merchant && catRes.merchant !== 'Unknown Merchant' && !catRes.merchant.startsWith('Dear') && catRes.merchant !== 'School / Education Fee') {
+    if (catRes.merchant && !/^(?:unknown\s*merchant|upi\s*transaction|insurance|others?|dear)/i.test(catRes.merchant) && catRes.merchant !== 'School / Education Fee') {
       merchant = catRes.merchant;
     } else {
       merchant = 'UPI Transaction';
@@ -740,8 +751,19 @@ export function parseEmailsLocally(emails: EmailTransactionAlert[]): Transaction
       const { merchant, card, referenceId } = extractBankAlertDetails(trailText, email.subject, email.primaryLabel);
       const dateStr = extractCanonicalEmailDate(email, trailText);
 
-      // Determine Category
-      const { category } = categorizeTransaction(`${merchant} ${trailText}`);
+      // Determine Category by applying rules to the extracted merchant name (Requirements 3 & 4)
+      let category = 'Others';
+      const catRes = categorizeTransaction(merchant);
+      if (catRes.category && catRes.category !== 'Others' && catRes.category !== 'Other') {
+        category = catRes.category;
+      } else {
+        const subjRes = categorizeTransaction(email.subject);
+        if (subjRes.category && subjRes.category !== 'Others' && subjRes.category !== 'Other') {
+          category = subjRes.category;
+        } else {
+          category = 'Others';
+        }
+      }
       const type = /(?:credited|deposit|refund|cashback|payment\s*received)/i.test(trailText) ? 'credit' : 'debit';
       const monthObj = getStatementMonth(dateStr);
 
@@ -832,6 +854,17 @@ export function deduplicateTransactions(txs: Transaction[]): Transaction[] {
  * Realistic sample email alerts reflecting actual user Bank alert formats.
  */
 export const SAMPLE_EMAIL_ALERTS: EmailTransactionAlert[] = [
+  {
+    messageId: 'email_sbi_vadilal_000',
+    subject: 'Transaction Alert from SBI Card',
+    sender: 'online@sbicard.com',
+    date: 'Fri, 23 Oct 2026 15:30:00 +0530',
+    internalDate: String(new Date('2026-10-23T15:30:00+05:30').getTime()),
+    snippet: 'Rs.30.00 spent on your SBI Credit Card ending with 1035 at Vadilal on 23-10-26 via UPI (Ref No. 317560074549).',
+    bodyText: 'Dear Cardholder,\n\nThis is to inform you that,\n\nRs.30.00 spent on your SBI Credit Card ending with 1035 at Vadilal on 23-10-26 via UPI (Ref No. 317560074549). Trxn. not done by you? Report at https://sbicard.com/Dispute. If you have not authorized this transaction please contact the SBI Card helpline.',
+    primaryLabel: 'SBI',
+    labelNames: ['Bank/SBI', 'SBI']
+  },
   {
     messageId: 'email_sbi_mstendulkar_001',
     subject: 'Transaction Alert from SBI Card',
