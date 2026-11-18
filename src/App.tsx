@@ -313,8 +313,18 @@ export default function App() {
         setTimeout(() => {
           autoSyncEmailAlerts(activeSheet, '30_days');
         }, 800);
+      } else {
+        showToast('Sign-in cancelled. Click "Connect Google Account" whenever you are ready.', 'info');
       }
     } catch (err: any) {
+      if (
+        err?.code === 'auth/popup-closed-by-user' ||
+        err?.code === 'auth/cancelled-popup-request'
+      ) {
+        showToast('Sign-in cancelled. Click "Connect Google Account" whenever you are ready.', 'info');
+        return;
+      }
+
       console.error('Sign in error:', err);
       const isUnauthorizedDomain =
         err?.code === 'auth/unauthorized-domain' ||

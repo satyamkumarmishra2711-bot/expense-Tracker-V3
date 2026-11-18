@@ -89,6 +89,9 @@ export const SheetManagerModal: React.FC<SheetManagerModalProps> = ({
         await fetchSheets();
       }
     } catch (err: any) {
+      if (err?.code === 'auth/popup-closed-by-user' || err?.code === 'auth/cancelled-popup-request') {
+        return;
+      }
       console.error('Sign-in error:', err);
       setError(err.message || 'Google sign-in failed');
     } finally {
@@ -122,6 +125,10 @@ export const SheetManagerModal: React.FC<SheetManagerModalProps> = ({
       onSelectSheet(created);
       onClose();
     } catch (err: any) {
+      if (err?.code === 'auth/popup-closed-by-user' || err?.code === 'auth/cancelled-popup-request') {
+        setError('Sign-in popup was closed. Please try again.');
+        return;
+      }
       console.error('Failed to create sheet', err);
       setError(err.message || 'Failed to create spreadsheet in Google Drive');
     } finally {
@@ -154,6 +161,10 @@ export const SheetManagerModal: React.FC<SheetManagerModalProps> = ({
       onSelectSheet(meta);
       onClose();
     } catch (err: any) {
+      if (err?.code === 'auth/popup-closed-by-user' || err?.code === 'auth/cancelled-popup-request') {
+        setError('Sign-in popup was closed. Please try again.');
+        return;
+      }
       console.error('Failed to link spreadsheet', err);
       setError(err.message || 'Failed to access spreadsheet. Please check the URL or permissions.');
     } finally {

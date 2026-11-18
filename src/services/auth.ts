@@ -68,6 +68,7 @@ const OAUTH_USER_EMAIL_KEY = 'statementflow_google_user_email';
 
 let cachedAccessToken: string | null = null;
 let isSigningIn = false;
+let activeSignInPromise: Promise<{ user: User; accessToken: string } | null> | null = null;
 
 const getStoredAccessToken = (): string | null => {
   try {
@@ -131,25 +132,43 @@ export const initAuth = (
 
 /**
  * Signs in with Google using Firebase Auth popup to obtain user profile and Workspace access token.
+ * Returns null gracefully if the user closes or cancels the popup.
  */
 export const googleSignIn = async (): Promise<{ user: User; accessToken: string } | null> => {
-  try {
-    isSigningIn = true;
-    const result = await signInWithPopup(auth, provider);
-    const credential = GoogleAuthProvider.credentialFromResult(result);
-    if (!credential?.accessToken) {
-      throw new Error('Failed to obtain Google OAuth access token from Firebase credential.');
-    }
-
-    cachedAccessToken = credential.accessToken;
-    storeAccessToken(credential.accessToken, result.user.email);
-    return { user: result.user, accessToken: cachedAccessToken };
-  } catch (error: unknown) {
-    console.error('Google Sign-In Error:', error);
-    throw error;
-  } finally {
-    isSigningIn = false;
+  if (activeSignInPromise) {
+    return activeSignInPromise;
   }
+
+  activeSignInPromise = (async () => {
+    try {
+      isSigningIn = true;
+      const result = await signInWithPopup(auth, provider);
+      const credential = GoogleAuthProvider.credentialFromResult(result);
+      if (!credential?.accessToken) {
+        throw new Error('Failed to obtain Google OAuth access token from Firebase credential.');
+      }
+
+      cachedAccessToken = credential.accessToken;
+      storeAccessToken(credential.accessToken, result.user.email);
+      return { user: result.user, accessToken: cachedAccessToken };
+    } catch (error: unknown) {
+      const code = (error as { code?: string })?.code;
+      if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
+        console.info('Google Sign-In popup was closed before completing authentication.');
+        return null;
+      }
+      if (code === 'auth/popup-blocked') {
+        throw new Error('Sign-in popup was blocked by your browser. Please allow popups for this site and try again.');
+      }
+      console.error('Google Sign-In Error:', error);
+      throw error;
+    } finally {
+      isSigningIn = false;
+      activeSignInPromise = null;
+    }
+  })();
+
+  return activeSignInPromise;
 };
 
 /**
